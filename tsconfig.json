@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
     "target": "ES2020",
     "module": "commonjs",
     "lib": [
@@ -21,7 +23,8 @@
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
     "typeRoots": [
-      "./node_modules/@types"
+      "./node_modules/@types",
+      "lambda/compiled.d.ts",
     ]
   },
   "exclude": [
