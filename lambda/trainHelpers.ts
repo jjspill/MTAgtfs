@@ -1,4 +1,5 @@
 import { parse } from 'csv-parse/sync';
+import { format, toZonedTime } from 'date-fns-tz';
 import { readFileSync } from 'fs';
 import path from 'path';
 
@@ -12,6 +13,17 @@ export const getStopsCSV = () => {
     skip_empty_lines: true,
   });
 };
+
+export function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function convertUnixToISO8601(unixTimestamp: string): string {
+  const utcDate = new Date(parseInt(unixTimestamp) * 1000);
+  const timeZone = 'America/New_York'; // EST/EDT
+  const zonedDate = toZonedTime(utcDate, timeZone);
+  return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone });
+}
 
 export const getStationName = (stops: any, stationId: string) => {
   const station = stops.find((stop: any) => stop.stop_id === stationId);

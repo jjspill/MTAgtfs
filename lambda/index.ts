@@ -1,18 +1,16 @@
 import * as AWS from 'aws-sdk';
 import fetch from 'node-fetch';
 import * as protobuf from './compiled';
-import moment from 'moment-timezone';
-import GChatService from '../gchat_service';
-import path from 'path';
-import { promises as fs, write } from 'fs';
 import { StationTrainSchedule } from './TrainMap';
-import { getStationName, getStopsCSV } from './trainHelpers';
-import { format, toZonedTime } from 'date-fns-tz';
+import {
+  convertUnixToISO8601,
+  delay,
+  getStationName,
+  getStopsCSV,
+} from './trainHelpers';
 
 // Configuring AWS Region
 AWS.config.update({ region: 'us-east-1' });
-
-const dynamoDb = new AWS.DynamoDB.DocumentClient();
 const FeedMessage = protobuf.transit_realtime.FeedMessage;
 
 const urls: string[] = [
@@ -26,44 +24,8 @@ const urls: string[] = [
   'https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-si',
 ];
 
-interface TrainArrival {
-  stopId: string;
-  arrivalTime: string;
-  tripId: string;
-  routeId: string; // line
-}
-
-interface Upload {
-  southbound: TrainArrival[];
-  northbound: TrainArrival[];
-}
-
-async function writeDataToFile(
-  data: any,
-  folderName: string,
-  fileName: string,
-): Promise<void> {
-  const dirPath = path.join(__dirname, 'decoded', folderName);
-  await fs.mkdir(dirPath, { recursive: true });
-  await fs.writeFile(
-    path.join(dirPath, `${fileName}.json`),
-    JSON.stringify(data, null, 2),
-  );
-}
-
-// function convertUnixToISO8601(unixTimestamp: string): string {
-//   const date = new Date(parseInt(unixTimestamp) * 1000);
-//   return date.toISOString();
-// }
-
-function convertUnixToISO8601(unixTimestamp: string): string {
-  const utcDate = new Date(parseInt(unixTimestamp) * 1000);
-  const timeZone = 'America/New_York'; // EST/EDT
-  const zonedDate = toZonedTime(utcDate, timeZone);
-  return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone });
-}
-
-export const handler = async (): Promise<void> => {
+async function processTransitData(): Promise<void> {
+  console.log('Processing transit data...');
   const responses = await Promise.all(
     urls.map((url) =>
       fetch(url).then((response) =>
@@ -105,11 +67,27 @@ export const handler = async (): Promise<void> => {
     });
   });
 
-  // console.log('astor place', arrivalMap.getSchedule('L06'));
-  // arrivalMap.logSchedule('F14');
-
-  // await arrivalMap.writeToDynamoDB(dynamoDb, process.env.TABLE_NAME!);
-  // await arrivalMap.writeToS3(process.env.BUCKET_NAME!, 'train-schedule.json');
   await arrivalMap.writeToPostgres();
-  // console.log('arrivals', arrivalMap.getSchedule('F14'));
+  console.log('Transit data processed');
+}
+
+export const handler = async (): Promise<void> => {
+  await processTransitData();
 };
+
+// export const handler = async (): Promise<void> => {
+//   const startTime = Date.now(); // Record the start time of the first process
+
+//   await processTransitData(); // Run the first time
+
+//   const endTime = Date.now();
+//   const processDuration = endTime - startTime;
+//   const remainingDelay = 30000 - processDuration; // Calculate the remaining time to wait
+
+//   if (remainingDelay > 0) {
+//     console.log(`Waiting for ${remainingDelay}ms...`);
+//     await delay(remainingDelay); // Wait for the remainder of the 30 seconds
+//   }
+
+//   await processTransitData(); // Run the second time
+// };

@@ -52,7 +52,7 @@ export class SubwayDataPullerStack extends cdk.Stack {
           'https://chat.googleapis.com/v1/spaces/AAAAm5vfQEc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=cOfRsy3vFhwJK4b3YV-m4DtX2oC346KbdiHmUvRLphQ',
       },
       memorySize: 256, // Increase if needed
-      timeout: cdk.Duration.seconds(40), // Adjust based on processing needs
+      timeout: cdk.Duration.seconds(60), // Adjust based on processing needs
       // deadLetterQueue: deadLetterQueue,
       // deadLetterQueueEnabled: true,
     });

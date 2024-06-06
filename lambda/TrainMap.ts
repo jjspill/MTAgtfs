@@ -1,5 +1,4 @@
 import * as AWS from 'aws-sdk';
-import directionNames from './directionNames.json';
 import * as pg from 'pg';
 
 export interface TrainArrivalMap {
@@ -18,27 +17,27 @@ interface DirectionMap {
   [key: string]: DirectionLabels;
 }
 
-export const getTripHeadsign = (
-  stationId: string,
-  directionKey: 'northbound' | 'southbound',
-): string => {
-  const directions: DirectionMap = directionNames;
-  if (directionKey !== 'northbound' && directionKey !== 'southbound') {
-    throw new Error('Invalid direction key');
-  }
-  if (!stationId) {
-    throw new Error('Invalid stationId');
-  }
+// export const getTripHeadsign = (
+//   stationId: string,
+//   directionKey: 'northbound' | 'southbound',
+// ): string => {
+//   const directions: DirectionMap = directionNames;
+//   if (directionKey !== 'northbound' && directionKey !== 'southbound') {
+//     throw new Error('Invalid direction key');
+//   }
+//   if (!stationId) {
+//     throw new Error('Invalid stationId');
+//   }
 
-  const station = directions[stationId];
-  if (!station) {
-    return directionKey === 'northbound' ? 'Northbound' : 'Southbound';
-  }
-  return (
-    station[directionKey] ||
-    (directionKey === 'northbound' ? 'Northbound' : 'Southbound')
-  );
-};
+//   const station = directions[stationId];
+//   if (!station) {
+//     return directionKey === 'northbound' ? 'Northbound' : 'Southbound';
+//   }
+//   return (
+//     station[directionKey] ||
+//     (directionKey === 'northbound' ? 'Northbound' : 'Southbound')
+//   );
+// };
 
 export class StationTrainSchedule {
   private stationMap: {
@@ -81,7 +80,7 @@ export class StationTrainSchedule {
     }
 
     const directionKey = direction === 'N' ? 'northbound' : 'southbound';
-    const trip_headsign = getTripHeadsign(stationId, directionKey);
+    // const trip_headsign = getTripHeadsign(stationId, directionKey);
 
     const pos = this.binarySearch(
       this.stationMap[stationId][directionKey].trains,
@@ -89,12 +88,12 @@ export class StationTrainSchedule {
     );
     this.stationMap[stationId][directionKey].trains.splice(pos, 0, newTrain);
 
-    trip_headsign && this.stationMap[stationId][directionKey].name === ''
-      ? (this.stationMap[stationId][directionKey].name = trip_headsign)
-      : null;
+    // trip_headsign && this.stationMap[stationId][directionKey].name === ''
+    //   ? (this.stationMap[stationId][directionKey].name = trip_headsign)
+    //   : null;
 
-    if (this.stationMap[stationId][directionKey].trains.length > 10) {
-      this.stationMap[stationId][directionKey].trains.length = 10;
+    if (this.stationMap[stationId][directionKey].trains.length > 5) {
+      this.stationMap[stationId][directionKey].trains.length = 5;
     }
   }
 
@@ -125,57 +124,47 @@ export class StationTrainSchedule {
   async writeToPostgres() {
     if (!this.stationMap) return;
 
-    const promises = []; // Array to hold all promises for concurrent execution
+    const client = await this.pgPool.connect();
+    try {
+      await client.query('BEGIN'); // Start transaction
 
-    for (const stationId in this.stationMap) {
-      if (this.stationMap.hasOwnProperty(stationId)) {
-        const station = this.stationMap[stationId];
-        const trains = station.northbound.trains.concat(
-          station.southbound.trains,
-        );
+      // Step 1: Clear the table
+      await client.query('TRUNCATE TABLE arrivals RESTART IDENTITY');
 
-        const batchSize = 500; // Adjust batch size based on performance and memory considerations
-        for (let i = 0; i < trains.length; i += batchSize) {
-          const batch = trains.slice(i, i + batchSize);
-          const queryText = `
-                    INSERT INTO arrivals (stop_id, arrival_time, destination, route_id, trip_id)
-                    VALUES ${batch.map((_, index) => `($${index * 5 + 1}, $${index * 5 + 2}::timestamp, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5})`).join(', ')}
-                    ON CONFLICT DO NOTHING;
-                `;
-          const queryValues = batch.flatMap((train) => [
-            stationId,
-            train.arrivalTime,
-            train.destination,
-            train.routeId,
-            train.tripId,
-          ]);
-
-          // Create a scoped async function to handle each batch insert
-          promises.push(
-            (async () => {
-              const client = await this.pgPool.connect();
-              try {
-                await client.query(queryText, queryValues);
-              } catch (err) {
-                console.error(
-                  `Error executing batch insert for station ${stationId}:`,
-                  err,
-                );
-              } finally {
-                client.release();
-              }
-            })(),
+      // Step 2: Insert records in batches
+      for (const stationId in this.stationMap) {
+        if (this.stationMap.hasOwnProperty(stationId)) {
+          const station = this.stationMap[stationId];
+          const trains = station.northbound.trains.concat(
+            station.southbound.trains,
           );
+
+          for (let i = 0; i < trains.length; i += 500) {
+            // Process in batches of 500
+            const batch = trains.slice(i, i + 500);
+            const queryText = `
+                        INSERT INTO arrivals (stop_id, arrival_time, destination, route_id, trip_id)
+                        VALUES ${batch.map((_, index) => `($${index * 5 + 1}, $${index * 5 + 2}::timestamp, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5})`).join(', ')};
+                    `;
+            const queryValues = batch.flatMap((train) => [
+              stationId,
+              train.arrivalTime,
+              train.destination,
+              train.routeId,
+              train.tripId,
+            ]);
+            await client.query(queryText, queryValues);
+          }
         }
       }
-    }
 
-    try {
-      // Await all insert operations to complete concurrently
-      await Promise.all(promises);
-      console.log('All data potentially written to Postgres');
+      await client.query('COMMIT'); // Commit the transaction after all batches are processed
+      console.log('All data successfully updated in Postgres');
     } catch (err) {
-      console.error(`Error during parallel execution:`, err);
+      await client.query('ROLLBACK'); // Rollback transaction on error
+      console.error(`Error during transaction execution:`, err);
+    } finally {
+      client.release(); // Always release the client
     }
   }
 
