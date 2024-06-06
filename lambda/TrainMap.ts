@@ -1,5 +1,6 @@
 import * as AWS from 'aws-sdk';
 import directionNames from './directionNames.json';
+import * as pg from 'pg';
 
 export interface TrainArrivalMap {
   arrivalTime: string; // ISO 8601 format for simplicity in sorting
@@ -53,8 +54,15 @@ export class StationTrainSchedule {
     };
   };
 
+  private pgPool: pg.Pool;
+  private s3: AWS.S3;
+
   constructor() {
     this.stationMap = {};
+    this.s3 = new AWS.S3();
+    this.pgPool = new pg.Pool({
+      connectionString: process.env.POSTGRES_CONNECTION_STRING,
+    });
   }
 
   keys(): string[] {
@@ -114,6 +122,63 @@ export class StationTrainSchedule {
         : {};
   }
 
+  async writeToPostgres() {
+    if (!this.stationMap) return;
+
+    const promises = []; // Array to hold all promises for concurrent execution
+
+    for (const stationId in this.stationMap) {
+      if (this.stationMap.hasOwnProperty(stationId)) {
+        const station = this.stationMap[stationId];
+        const trains = station.northbound.trains.concat(
+          station.southbound.trains,
+        );
+
+        const batchSize = 500; // Adjust batch size based on performance and memory considerations
+        for (let i = 0; i < trains.length; i += batchSize) {
+          const batch = trains.slice(i, i + batchSize);
+          const queryText = `
+                    INSERT INTO arrivals (stop_id, arrival_time, destination, route_id, trip_id)
+                    VALUES ${batch.map((_, index) => `($${index * 5 + 1}, $${index * 5 + 2}::timestamp, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5})`).join(', ')}
+                    ON CONFLICT DO NOTHING;
+                `;
+          const queryValues = batch.flatMap((train) => [
+            stationId,
+            train.arrivalTime,
+            train.destination,
+            train.routeId,
+            train.tripId,
+          ]);
+
+          // Create a scoped async function to handle each batch insert
+          promises.push(
+            (async () => {
+              const client = await this.pgPool.connect();
+              try {
+                await client.query(queryText, queryValues);
+              } catch (err) {
+                console.error(
+                  `Error executing batch insert for station ${stationId}:`,
+                  err,
+                );
+              } finally {
+                client.release();
+              }
+            })(),
+          );
+        }
+      }
+    }
+
+    try {
+      // Await all insert operations to complete concurrently
+      await Promise.all(promises);
+      console.log('All data potentially written to Postgres');
+    } catch (err) {
+      console.error(`Error during parallel execution:`, err);
+    }
+  }
+
   async writeToDynamoDB(
     client: AWS.DynamoDB.DocumentClient,
     tableName: string,
@@ -128,8 +193,8 @@ export class StationTrainSchedule {
       for (const [stationId, directions] of Object.entries(this.stationMap)) {
         const item = {
           stopId: stationId,
-          northbound_station: directions.northbound.name,
-          southbound_station: directions.southbound.name,
+          // northbound_station: directions.northbound.name,
+          // southbound_station: directions.southbound.name,
           northbound: directions.northbound,
           southbound: directions.southbound,
           ttl: Math.floor(Date.now() / 1000) + 60 * 10, // 10 minutes TTL
@@ -208,6 +273,23 @@ export class StationTrainSchedule {
         },
       };
       await client.batchWrite(retryParams).promise();
+    }
+  }
+
+  async writeToS3(bucketName: string, fileName: string): Promise<void> {
+    const data = JSON.stringify(this.stationMap, null, 2); // Convert station map to JSON string
+    const params = {
+      Bucket: bucketName,
+      Key: fileName,
+      Body: data,
+      ContentType: 'application/json', // Set the content type as JSON
+    };
+
+    try {
+      await this.s3.putObject(params).promise(); // Upload data to S3
+      console.log('Data successfully written to S3:', fileName);
+    } catch (err) {
+      console.error('Failed to write to S3:', err);
     }
   }
 

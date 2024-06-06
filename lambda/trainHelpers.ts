@@ -3,8 +3,8 @@ import { readFileSync } from 'fs';
 import path from 'path';
 
 export const getStopsCSV = () => {
-  // let csvPath = path.join('/opt', 'stops.csv');
-  const csvPath = path.join(__dirname, 'stops.csv');
+  let csvPath = path.join('/opt', 'stops.csv');
+  // const csvPath = path.join(__dirname, 'stops.csv');
   const stationInfo = readFileSync(csvPath, 'utf-8');
 
   return parse(stationInfo, {

@@ -7,6 +7,7 @@ import path from 'path';
 import { promises as fs, write } from 'fs';
 import { StationTrainSchedule } from './TrainMap';
 import { getStationName, getStopsCSV } from './trainHelpers';
+import { format, toZonedTime } from 'date-fns-tz';
 
 // Configuring AWS Region
 AWS.config.update({ region: 'us-east-1' });
@@ -50,9 +51,16 @@ async function writeDataToFile(
   );
 }
 
+// function convertUnixToISO8601(unixTimestamp: string): string {
+//   const date = new Date(parseInt(unixTimestamp) * 1000);
+//   return date.toISOString();
+// }
+
 function convertUnixToISO8601(unixTimestamp: string): string {
-  const date = new Date(parseInt(unixTimestamp) * 1000);
-  return date.toISOString();
+  const utcDate = new Date(parseInt(unixTimestamp) * 1000);
+  const timeZone = 'America/New_York'; // EST/EDT
+  const zonedDate = toZonedTime(utcDate, timeZone);
+  return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone });
 }
 
 export const handler = async (): Promise<void> => {
@@ -100,6 +108,8 @@ export const handler = async (): Promise<void> => {
   // console.log('astor place', arrivalMap.getSchedule('L06'));
   // arrivalMap.logSchedule('F14');
 
-  await arrivalMap.writeToDynamoDB(dynamoDb, process.env.TABLE_NAME!);
+  // await arrivalMap.writeToDynamoDB(dynamoDb, process.env.TABLE_NAME!);
+  // await arrivalMap.writeToS3(process.env.BUCKET_NAME!, 'train-schedule.json');
+  await arrivalMap.writeToPostgres();
   // console.log('arrivals', arrivalMap.getSchedule('F14'));
 };
