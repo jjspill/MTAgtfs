@@ -17,28 +17,6 @@ interface DirectionMap {
   [key: string]: DirectionLabels;
 }
 
-// export const getTripHeadsign = (
-//   stationId: string,
-//   directionKey: 'northbound' | 'southbound',
-// ): string => {
-//   const directions: DirectionMap = directionNames;
-//   if (directionKey !== 'northbound' && directionKey !== 'southbound') {
-//     throw new Error('Invalid direction key');
-//   }
-//   if (!stationId) {
-//     throw new Error('Invalid stationId');
-//   }
-
-//   const station = directions[stationId];
-//   if (!station) {
-//     return directionKey === 'northbound' ? 'Northbound' : 'Southbound';
-//   }
-//   return (
-//     station[directionKey] ||
-//     (directionKey === 'northbound' ? 'Northbound' : 'Southbound')
-//   );
-// };
-
 export class StationTrainSchedule {
   private stationMap: {
     [stationId: string]: {
@@ -80,21 +58,33 @@ export class StationTrainSchedule {
     }
 
     const directionKey = direction === 'N' ? 'northbound' : 'southbound';
-    // const trip_headsign = getTripHeadsign(stationId, directionKey);
 
-    const pos = this.binarySearch(
-      this.stationMap[stationId][directionKey].trains,
-      newTrain.arrivalTime,
-    );
-    this.stationMap[stationId][directionKey].trains.splice(pos, 0, newTrain);
+    const newTrainArrivalDate = new Date(newTrain.arrivalTime);
+    const currentDate = new Date();
 
-    // trip_headsign && this.stationMap[stationId][directionKey].name === ''
-    //   ? (this.stationMap[stationId][directionKey].name = trip_headsign)
-    //   : null;
+    if (newTrainArrivalDate > currentDate) {
+      const pos = this.binarySearch(
+        this.stationMap[stationId][directionKey].trains,
+        newTrain.arrivalTime,
+      );
 
-    if (this.stationMap[stationId][directionKey].trains.length > 5) {
-      this.stationMap[stationId][directionKey].trains.length = 5;
+      this.stationMap[stationId][directionKey].trains.splice(pos, 0, newTrain);
+
+      if (this.stationMap[stationId][directionKey].trains.length > 5) {
+        this.stationMap[stationId][directionKey].trains.length = 5;
+      }
     }
+
+    // const pos = this.binarySearch(
+    //   this.stationMap[stationId][directionKey].trains,
+    //   newTrain.arrivalTime,
+    // );
+
+    // this.stationMap[stationId][directionKey].trains.splice(pos, 0, newTrain);
+
+    // if (this.stationMap[stationId][directionKey].trains.length > 5) {
+    //   this.stationMap[stationId][directionKey].trains.length = 5;
+    // }
   }
 
   private binarySearch(trains: TrainArrivalMap[], targetTime: string): number {

@@ -19,10 +19,10 @@ export function delay(ms: number): Promise<void> {
 }
 
 export function convertUnixToISO8601(unixTimestamp: string): string {
-  const utcDate = new Date(parseInt(unixTimestamp) * 1000);
-  const timeZone = 'America/New_York'; // EST/EDT
-  const zonedDate = toZonedTime(utcDate, timeZone);
-  return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone });
+  return new Date(parseInt(unixTimestamp) * 1000).toISOString();
+  // const timeZone = 'America/New_York'; // EST/EDT
+  // const zonedDate = toZonedTime(utcDate, timeZone);
+  // return format(zonedDate, "yyyy-MM-dd'T'HH:mm:ssXXX", { timeZone });
 }
 
 export const getStationName = (stops: any, stationId: string) => {
