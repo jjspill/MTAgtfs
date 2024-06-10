@@ -24,7 +24,7 @@ const urls: string[] = [
   'https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-si',
 ];
 
-async function processTransitData(): Promise<void> {
+async function processTransitData(tableName: string): Promise<void> {
   console.log('Processing transit data...');
   const responses = await Promise.all(
     urls.map((url) =>
@@ -67,12 +67,13 @@ async function processTransitData(): Promise<void> {
     });
   });
 
-  await arrivalMap.writeToPostgres();
-  console.log('Transit data processed');
+  await arrivalMap.writeToPostgres(tableName);
+  console.log('Transit data processed for table:', tableName);
 }
 
 export const handler = async (): Promise<void> => {
-  await processTransitData();
+  await processTransitData('arrivals_secondary');
+  await processTransitData('arrivals');
 };
 
 // export const handler = async (): Promise<void> => {

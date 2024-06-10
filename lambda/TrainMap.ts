@@ -17,6 +17,11 @@ interface DirectionMap {
   [key: string]: DirectionLabels;
 }
 
+function isValidTableName(name: string) {
+  const validTableNames = ['arrivals', 'arrivals_secondary'];
+  return validTableNames.includes(name);
+}
+
 export class StationTrainSchedule {
   private stationMap: {
     [stationId: string]: {
@@ -111,15 +116,15 @@ export class StationTrainSchedule {
         : {};
   }
 
-  async writeToPostgres() {
-    if (!this.stationMap) return;
+  async writeToPostgres(tableName: string) {
+    if (!this.stationMap || !isValidTableName(tableName)) return;
 
     const client = await this.pgPool.connect();
     try {
       await client.query('BEGIN'); // Start transaction
 
       // Step 1: Clear the table
-      await client.query('TRUNCATE TABLE arrivals RESTART IDENTITY');
+      await client.query(`TRUNCATE TABLE ${tableName} RESTART IDENTITY`);
 
       // Step 2: Insert records in batches
       for (const stationId in this.stationMap) {
@@ -133,7 +138,7 @@ export class StationTrainSchedule {
             // Process in batches of 500
             const batch = trains.slice(i, i + 500);
             const queryText = `
-                        INSERT INTO arrivals (stop_id, arrival_time, destination, route_id, trip_id)
+                        INSERT INTO ${tableName} (stop_id, arrival_time, destination, route_id, trip_id)
                         VALUES ${batch.map((_, index) => `($${index * 5 + 1}, $${index * 5 + 2}::timestamp, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5})`).join(', ')};
                     `;
             const queryValues = batch.flatMap((train) => [
