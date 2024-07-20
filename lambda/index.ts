@@ -6,12 +6,16 @@ import GChatService from '../gchat_service';
 import path from 'path';
 import { promises as fs, write } from 'fs';
 import { StationTrainSchedule } from './TrainMap';
-import { getStationName, getStopsCSV } from './trainHelpers';
+import {
+  convertUnixToISO8601,
+  delay,
+  getStationName,
+  getStopsCSV,
+} from './trainHelpers';
 
 // Configuring AWS Region
 AWS.config.update({ region: 'us-east-1' });
 
-const dynamoDb = new AWS.DynamoDB.DocumentClient();
 const FeedMessage = protobuf.transit_realtime.FeedMessage;
 
 const urls: string[] = [
@@ -25,37 +29,8 @@ const urls: string[] = [
   'https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-si',
 ];
 
-interface TrainArrival {
-  stopId: string;
-  arrivalTime: string;
-  tripId: string;
-  routeId: string; // line
-}
-
-interface Upload {
-  southbound: TrainArrival[];
-  northbound: TrainArrival[];
-}
-
-async function writeDataToFile(
-  data: any,
-  folderName: string,
-  fileName: string,
-): Promise<void> {
-  const dirPath = path.join(__dirname, 'decoded', folderName);
-  await fs.mkdir(dirPath, { recursive: true });
-  await fs.writeFile(
-    path.join(dirPath, `${fileName}.json`),
-    JSON.stringify(data, null, 2),
-  );
-}
-
-function convertUnixToISO8601(unixTimestamp: string): string {
-  const date = new Date(parseInt(unixTimestamp) * 1000);
-  return date.toISOString();
-}
-
-export const handler = async (): Promise<void> => {
+async function processTransitData(tableName: string): Promise<void> {
+  console.log('Processing transit data...');
   const responses = await Promise.all(
     urls.map((url) =>
       fetch(url).then((response) =>
@@ -97,9 +72,11 @@ export const handler = async (): Promise<void> => {
     });
   });
 
-  // console.log('astor place', arrivalMap.getSchedule('L06'));
-  // arrivalMap.logSchedule('F14');
+  await arrivalMap.writeToPostgres(tableName);
+  console.log('Transit data processed for table:', tableName);
+}
 
-  await arrivalMap.writeToDynamoDB(dynamoDb, process.env.TABLE_NAME!);
-  // console.log('arrivals', arrivalMap.getSchedule('F14'));
+export const handler = async (): Promise<void> => {
+  await processTransitData('arrivals_secondary');
+  await processTransitData('arrivals');
 };

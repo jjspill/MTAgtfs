@@ -8,20 +8,33 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+
+interface stackProps extends cdk.StackProps {
+  postgres_connection_string: string;
+}
 
 export class SubwayDataPullerStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: stackProps) {
     super(scope, id, props);
 
+    if (!props.postgres_connection_string) {
+      throw new Error('Postgres Connection String is required');
+    }
     // Define the DynamoDB table for GTFS Data
-    const table = new dynamodb.Table(this, 'SubwayData', {
-      tableName: 'GtfsHandlerTable',
-      partitionKey: { name: 'stopId', type: dynamodb.AttributeType.STRING },
-      // sortKey: { name: 'trainOrder', type: dynamodb.AttributeType.NUMBER },
-      timeToLiveAttribute: 'ttl',
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Change as appropriate
-    });
+    // const table = new dynamodb.Table(this, 'SubwayData', {
+    //   tableName: 'GtfsHandlerTable',
+    //   partitionKey: { name: 'stopId', type: dynamodb.AttributeType.STRING },
+    //   // sortKey: { name: 'trainOrder', type: dynamodb.AttributeType.NUMBER },
+    //   timeToLiveAttribute: 'ttl',
+    //   billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    //   removalPolicy: cdk.RemovalPolicy.DESTROY, // Change as appropriate
+    // });
+
+    // const bucket = new s3.Bucket(this, 'Bucket', {
+    //   bucketName: 'gtfs-data-bucket',
+    //   removalPolicy: cdk.RemovalPolicy.DESTROY,
+    // });
 
     // Define a dead-letter queue for Lambda
     // const deadLetterQueue = new sqs.Queue(this, 'DeadLetterQueue');
@@ -32,18 +45,19 @@ export class SubwayDataPullerStack extends cdk.Stack {
       entry: 'lambda/index.ts',
       handler: 'handler',
       environment: {
-        TABLE_NAME: table.tableName,
-        WEBHOOK_URL:
-          'https://chat.googleapis.com/v1/spaces/AAAAm5vfQEc/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=cOfRsy3vFhwJK4b3YV-m4DtX2oC346KbdiHmUvRLphQ',
+        // TABLE_NAME: table.tableName,
+        // BUCKET_NAME: bucket.bucketName,
+        POSTGRES_CONNECTION_STRING: props.postgres_connection_string,
       },
       memorySize: 256, // Increase if needed
-      timeout: cdk.Duration.seconds(40), // Adjust based on processing needs
+      timeout: cdk.Duration.seconds(60), // Adjust based on processing needs
       // deadLetterQueue: deadLetterQueue,
       // deadLetterQueueEnabled: true,
     });
 
     // Grant the Lambda function permissions to write to the DynamoDB table
-    table.grantWriteData(gtfsLambda);
+    // table.grantWriteData(gtfsLambda);
+    // bucket.grantReadWrite(gtfsLambda);
 
     const ruleOnTheMinute = new events.Rule(this, 'RuleOnTheMinute', {
       schedule: events.Schedule.expression('cron(* * * * ? *)'),

@@ -5,6 +5,10 @@
     "subway_data_puller": "bin/subway_data_puller.js"
   },
   "scripts": {
+    "db-up": "cd docker && docker-compose up -d",
+    "dev": "bun run run/run.ts",
+    "db-down": "cd docker && docker-compose down",
+    "run": "npm run db-up && npm run dev && npm run db-down",
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",

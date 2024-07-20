@@ -1,5 +1,5 @@
 import * as AWS from 'aws-sdk';
-import directionNames from './directionNames.json';
+import * as pg from 'pg';
 
 export interface TrainArrivalMap {
   arrivalTime: string; // ISO 8601 format for simplicity in sorting
@@ -8,36 +8,10 @@ export interface TrainArrivalMap {
   destination: string;
 }
 
-interface DirectionLabels {
-  northbound: string;
-  southbound: string;
+function isValidTableName(name: string) {
+  const validTableNames = ['arrivals', 'arrivals_secondary'];
+  return validTableNames.includes(name);
 }
-
-interface DirectionMap {
-  [key: string]: DirectionLabels;
-}
-
-export const getTripHeadsign = (
-  stationId: string,
-  directionKey: 'northbound' | 'southbound',
-): string => {
-  const directions: DirectionMap = directionNames;
-  if (directionKey !== 'northbound' && directionKey !== 'southbound') {
-    throw new Error('Invalid direction key');
-  }
-  if (!stationId) {
-    throw new Error('Invalid stationId');
-  }
-
-  const station = directions[stationId];
-  if (!station) {
-    return directionKey === 'northbound' ? 'Northbound' : 'Southbound';
-  }
-  return (
-    station[directionKey] ||
-    (directionKey === 'northbound' ? 'Northbound' : 'Southbound')
-  );
-};
 
 export class StationTrainSchedule {
   private stationMap: {
@@ -53,8 +27,13 @@ export class StationTrainSchedule {
     };
   };
 
+  private pgPool: pg.Pool;
+
   constructor() {
     this.stationMap = {};
+    this.pgPool = new pg.Pool({
+      connectionString: process.env.POSTGRES_CONNECTION_STRING,
+    });
   }
 
   keys(): string[] {
@@ -73,20 +52,21 @@ export class StationTrainSchedule {
     }
 
     const directionKey = direction === 'N' ? 'northbound' : 'southbound';
-    const trip_headsign = getTripHeadsign(stationId, directionKey);
 
-    const pos = this.binarySearch(
-      this.stationMap[stationId][directionKey].trains,
-      newTrain.arrivalTime,
-    );
-    this.stationMap[stationId][directionKey].trains.splice(pos, 0, newTrain);
+    const newTrainArrivalDate = new Date(newTrain.arrivalTime);
+    const currentDate = new Date();
 
-    trip_headsign && this.stationMap[stationId][directionKey].name === ''
-      ? (this.stationMap[stationId][directionKey].name = trip_headsign)
-      : null;
+    if (newTrainArrivalDate > currentDate) {
+      const pos = this.binarySearch(
+        this.stationMap[stationId][directionKey].trains,
+        newTrain.arrivalTime,
+      );
 
-    if (this.stationMap[stationId][directionKey].trains.length > 10) {
-      this.stationMap[stationId][directionKey].trains.length = 10;
+      this.stationMap[stationId][directionKey].trains.splice(pos, 0, newTrain);
+
+      if (this.stationMap[stationId][directionKey].trains.length > 5) {
+        this.stationMap[stationId][directionKey].trains.length = 5;
+      }
     }
   }
 
@@ -114,76 +94,50 @@ export class StationTrainSchedule {
         : {};
   }
 
-  async writeToDynamoDB(
-    client: AWS.DynamoDB.DocumentClient,
-    tableName: string,
-  ): Promise<void> {
+  async writeToPostgres(tableName: string) {
+    if (!this.stationMap || !isValidTableName(tableName)) return;
+
+    const client = await this.pgPool.connect();
     try {
-      let writeRequests = [];
-      let totalWCU = 0;
-      let totalSize = 0;
-      let absoluteTotalSize = 0;
-      let absoluteTotalWCU = 0;
+      await client.query('BEGIN'); // Start transaction
 
-      for (const [stationId, directions] of Object.entries(this.stationMap)) {
-        const item = {
-          stopId: stationId,
-          northbound_station: directions.northbound.name,
-          southbound_station: directions.southbound.name,
-          northbound: directions.northbound,
-          southbound: directions.southbound,
-          ttl: Math.floor(Date.now() / 1000) + 60 * 10, // 10 minutes TTL
-        };
+      // Step 1: Clear the table
+      await client.query(`TRUNCATE TABLE ${tableName} RESTART IDENTITY`);
 
-        // Estimate item size in bytes
-        const itemSize = this.estimateItemSize(item);
-        totalSize += itemSize;
-
-        // DynamoDB WCU calculation (1 WCU for each 1KB)
-        const itemWCU = Math.ceil(itemSize / 1024);
-        totalWCU += itemWCU;
-
-        writeRequests.push({
-          PutRequest: {
-            Item: item,
-          },
-        });
-
-        if (writeRequests.length === 25) {
-          const batchWriteParams = {
-            RequestItems: {
-              [tableName]: writeRequests.splice(0, 25),
-            },
-          };
-          await client.batchWrite(batchWriteParams).promise();
-          console.log(
-            `Batch written with estimated WCUs: ${totalWCU}, Size: ${totalSize} bytes`,
+      // Step 2: Insert records in batches
+      for (const stationId in this.stationMap) {
+        if (this.stationMap.hasOwnProperty(stationId)) {
+          const station = this.stationMap[stationId];
+          const trains = station.northbound.trains.concat(
+            station.southbound.trains,
           );
-          absoluteTotalSize += totalSize;
-          absoluteTotalWCU += totalWCU;
-          totalWCU = 0; // Reset for next batch
-          totalSize = 0; // Reset for next batch
+
+          for (let i = 0; i < trains.length; i += 500) {
+            // Process in batches of 500
+            const batch = trains.slice(i, i + 500);
+            const queryText = `
+                        INSERT INTO ${tableName} (stop_id, arrival_time, destination, route_id, trip_id)
+                        VALUES ${batch.map((_, index) => `($${index * 5 + 1}, $${index * 5 + 2}::timestamp, $${index * 5 + 3}, $${index * 5 + 4}, $${index * 5 + 5})`).join(', ')};
+                    `;
+            const queryValues = batch.flatMap((train) => [
+              stationId,
+              train.arrivalTime,
+              train.destination,
+              train.routeId,
+              train.tripId,
+            ]);
+            await client.query(queryText, queryValues);
+          }
         }
       }
 
-      if (writeRequests.length > 0) {
-        const batchWriteParams = {
-          RequestItems: {
-            [tableName]: writeRequests,
-          },
-        };
-        await client.batchWrite(batchWriteParams).promise();
-        console.log(
-          `Final batch written with estimated WCUs: ${totalWCU}, Size: ${totalSize} bytes`,
-        );
-      }
-
-      console.log(
-        `Total WCUs: ${absoluteTotalWCU}, Total Size: ${absoluteTotalSize} bytes`,
-      );
-      console.log('Data successfully written to DynamoDB');
-    } catch (error) {
-      console.error('Error writing to DynamoDB:', error);
+      await client.query('COMMIT'); // Commit the transaction after all batches are processed
+      console.log('All data successfully updated in Postgres');
+    } catch (err) {
+      await client.query('ROLLBACK'); // Rollback transaction on error
+      console.error(`Error during transaction execution:`, err);
+    } finally {
+      client.release(); // Always release the client
     }
   }
 
