@@ -4,6 +4,8 @@
 node_modules
 !compiled.js
 !compiled.d.ts
+*.vscode/
+*old/
 
 # CDK asset staging directory
 .cdk.staging

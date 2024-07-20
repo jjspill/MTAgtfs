@@ -1,4 +1,4 @@
-import { handler } from './lambda/index';
+import { handler } from '../lambda/index';
 
 async function start() {
   try {
